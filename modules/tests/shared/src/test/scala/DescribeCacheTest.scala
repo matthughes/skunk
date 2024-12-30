@@ -21,7 +21,7 @@ class DescribeCacheTest extends SkunkTest {
     p.use { s1 =>
       p.use { s2 =>
         assert("sessions should be different", s1 ne s2) *>
-        assert("caches should be eq", s1.describeCache eq s2.describeCache)
+        assert("caches should be eq", s1.describeCache.commandCache eq s2.describeCache)
       }
     }
   }

@@ -313,9 +313,11 @@ object Session {
   abstract class Impl[F[_]: MonadCancelThrow] extends Session[F] {
 
     override def execute[A, B](query: Query[A, B])(args: A): F[List[B]] =
-      Monad[F].flatMap(prepare(query))(_.cursor(args).use {
-        _.fetch(Int.MaxValue).map { case (rows, _) => rows }
-      })
+      Monad[F].flatMap(prepare(query)) { pq =>
+        pq.cursor(args).use {
+         _.fetch(Int.MaxValue).map { case (rows, _) => rows }
+        }
+      }
 
     override def unique[A, B](query: Query[A, B])(args: A): F[B] =
       Monad[F].flatMap(prepare(query))(_.unique(args))
@@ -662,7 +664,7 @@ object Session {
           }
 
         override def prepare[A, B](query: Query[A, B]): F[PreparedQuery[F, A, B]] =
-          proto.prepare(query, typer).map(PreparedQuery.fromProto(_, redactionStrategy))
+          proto.prepare(query, typer).map { p => PreparedQuery.fromProto(p, redactionStrategy) }
 
         override def prepare[A](command: Command[A]): F[PreparedCommand[F, A]] =
           proto.prepare(command, typer).map(PreparedCommand.fromProto(_))

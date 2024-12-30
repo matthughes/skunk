@@ -36,8 +36,8 @@ object Prepare {
         }
 
       override def apply[A, B](query: skunk.Query[A, B], ty: Typer): F[PreparedQuery[F, A, B]] =
-        ParseDescribe[F](describeCache, parseCache).apply(query, ty).map { case (id, rd) =>
-          new PreparedQuery[F, A, B](id, query, rd) { pq =>
+        ParseDescribe[F](describeCache, parseCache).apply(query, ty).map { case (id, rd, evicted) =>
+          new PreparedQuery[F, A, B](id, query, rd, evicted) { pq =>
             def bind(args: A, origin: Origin): Resource[F, QueryPortal[F, A, B]] =
               Bind[F].apply(this, args, origin, redactionStrategy).map {
                new QueryPortal[F, A, B](_, pq, args, origin, redactionStrategy) {

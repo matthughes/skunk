@@ -7,7 +7,7 @@ package skunk.net.protocol
 import cats.syntax.all._
 import skunk.net.MessageSocket
 import skunk.net.Protocol.StatementId
-import skunk.net.message.{ Describe => DescribeMessage, Parse => ParseMessage, _ }
+import skunk.net.message.{ Describe => DescribeMessage, Parse => ParseMessage, Close => _, _ }
 import skunk.util.Typer
 import skunk.data.TypedRowDescription
 import org.typelevel.otel4s.Attribute
@@ -22,7 +22,7 @@ import skunk.net.protocol.exchange
 
 trait ParseDescribe[F[_]] {
   def command[A](cmd: skunk.Command[A], ty: Typer): F[StatementId]
-  def apply[A, B](query: skunk.Query[A, B], ty: Typer): F[(StatementId, TypedRowDescription)]
+  def apply[A, B](query: skunk.Query[A, B], ty: Typer): F[(StatementId, TypedRowDescription, List[StatementId])]
 }
 
 object ParseDescribe {
@@ -44,14 +44,16 @@ object ParseDescribe {
                 ).raiseError[F, Unit]
         } yield a
 
-      def parseExchange(stmt: Statement[_], ty: Typer)(span: Span[F]): F[(F[StatementId], StatementId => F[Unit])] = 
+      def parseExchange(stmt: Statement[_], ty: Typer)(span: Span[F]): F[(F[StatementId], StatementId => F[List[StatementId]])] = 
         stmt.encoder.oids(ty) match {
 
           case Right(os) if os.length > Short.MaxValue =>
-            TooManyParametersException(stmt).raiseError[F, (F[StatementId], StatementId => F[Unit])]
+            TooManyParametersException(stmt).raiseError[F, (F[StatementId], StatementId => F[List[StatementId]])]
 
           case Right(os) =>
-            OptionT(parseCache.value.get(stmt)).map(id => (id.pure, (_:StatementId) => ().pure)).getOrElse {
+            OptionT(parseCache.value.get(stmt)).map { case (id, evicted) => 
+              (id.pure, (_:StatementId) => evicted.pure)
+            }.getOrElse {
               val pre = for {
                 id <- nextName("statement").map(StatementId(_))
                 _  <- span.addAttributes(
@@ -67,13 +69,13 @@ object ParseDescribe {
                         case ParseComplete       => ().pure[F]
                         case ErrorResponse(info) => syncAndFail(stmt, info)
                       }
-                _  <- parseCache.value.put(stmt, id)
-              } yield ()
+                evicted  <- parseCache.value.put(stmt, id)
+              } yield evicted
 
               (pre, post)
             }
           case Left(err) =>
-            UnknownTypeException(stmt, err, ty.strategy).raiseError[F, (F[StatementId], StatementId => F[Unit])]
+            UnknownTypeException(stmt, err, ty.strategy).raiseError[F, (F[StatementId], StatementId => F[List[StatementId]])]
 
         }
 
@@ -124,10 +126,10 @@ object ParseDescribe {
 
       }
 
-      override def apply[A, B](query: skunk.Query[A, B], ty: Typer): F[(StatementId, TypedRowDescription)] = {
+      override def apply[A, B](query: skunk.Query[A, B], ty: Typer): F[(StatementId, TypedRowDescription, List[StatementId])] = {
         
         def describeExchange(span: Span[F]): F[(StatementId => F[Unit], F[TypedRowDescription])] = 
-          OptionT(cache.queryCache.get(query)).map(rd => ((_:StatementId) => ().pure, rd.pure)).getOrElse {
+          OptionT(cache.queryCache.get(query)).map { case (rd, _) => ((_:StatementId) => ().pure, rd.pure) }.getOrElse {
             val pre = (id: StatementId) =>
               for {
                 _  <- span.addAttribute(Attribute("statement-id", id.value))
@@ -147,7 +149,7 @@ object ParseDescribe {
                           span.addAttribute(Attribute("column-types", td.fields.map(_.tpe).mkString("[", ", ", "]"))).as(td)
                       }
                 _  <- ColumnAlignmentException(query, td).raiseError[F, Unit].unlessA(query.isDynamic || query.decoder.types === td.types)
-                _  <- cache.queryCache.put(query, td) // on success
+                _ <- cache.queryCache.put(query, td) // on success
               } yield td
 
             (pre, post)
@@ -161,9 +163,9 @@ object ParseDescribe {
                 id <- preParse
                 _  <- preDesc(id)
                 _  <- send(Flush)
-                _  <- postParse(id)
+                evicted  <- postParse(id)
                 rd <- postDesc
-              } yield (id, rd)
+              } yield (id, rd, evicted)
             }
           }
         }  

@@ -160,7 +160,8 @@ object Protocol {
   abstract class PreparedQuery[F[_], A, B](
     val id:             StatementId,
     val query:          Query[A, B],
-    val rowDescription: TypedRowDescription
+    val rowDescription: TypedRowDescription,
+    val evictedStatements: List[StatementId]
   ) extends PreparedStatement[F, A] {
     def statement: Statement[A] = query
     def bind(args: A, argsOrigin: Origin): Resource[F, QueryPortal[F, A, B]]

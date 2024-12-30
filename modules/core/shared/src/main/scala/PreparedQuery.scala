@@ -52,6 +52,7 @@ trait PreparedQuery[F[_], A, B] {
   def pipe(chunkSize: Int)(implicit or: Origin): Pipe[F, A, B] =
     _.flatMap(stream(_, chunkSize))
 
+  def cleanup: F[Unit]
 }
 
 /** @group Companions */
@@ -61,6 +62,9 @@ object PreparedQuery {
     implicit ev: MonadCancel[F, Throwable]
   ): PreparedQuery[F, A, B] =
     new PreparedQuery[F, A, B] {
+
+    def cleanup: F[Unit] = ???
+      // proto.evictedStatements.traverse_(skunk.net.protocol.Close[F].apply)
 
      override def cursor(args: A)(implicit or: Origin): Resource[F, Cursor[F, B]] =
         proto.bind(args, or).map { p =>
@@ -150,6 +154,7 @@ object PreparedQuery {
         override def stream(args: A, chunkSize: Int)(implicit or: Origin): Stream[F, U] = fa.stream(args, chunkSize).map(f)
         override def option(args: A)(implicit or: Origin): F[Option[U]] = fa.option(args).map(_.map(f))
         override def unique(args: A)(implicit or: Origin): F[U] = fa.unique(args).map(f)
+        override def cleanup: F[Unit] = fa.cleanup
       }
   }
 
@@ -165,6 +170,7 @@ object PreparedQuery {
           override def stream(args: U, chunkSize: Int)(implicit or: Origin): Stream[F, B] = fa.stream(f(args), chunkSize)
           override def option(args: U)(implicit or: Origin): F[Option[B]] = fa.option(f(args))
           override def unique(args: U)(implicit or: Origin): F[B] = fa.unique(f(args))
+          override def cleanup: F[Unit] = fa.cleanup
         }
     }
 
@@ -197,8 +203,8 @@ object PreparedQuery {
         override def option(args: A)(implicit or: Origin): G[Option[B]] = fk(outer.option(args))
         override def stream(args: A, chunkSize: Int)(implicit or: Origin): Stream[G,B] = outer.stream(args, chunkSize).translate(fk)
         override def unique(args: A)(implicit or: Origin): G[B] = fk(outer.unique(args))
+        override def cleanup: G[Unit] = fk(outer.cleanup)
       }
-
   }
 
 }
